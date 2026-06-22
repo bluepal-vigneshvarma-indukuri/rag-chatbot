@@ -258,3 +258,63 @@ def get_chunks_by_ids(chunk_ids: List[str], db_url: str) -> List[dict]:
             ]
     finally:
         conn.close()
+
+
+def get_chunk_detail(chunk_id: str, user_id: str, db_url: str) -> Optional[dict]:
+    """Fetch full chunk text, document metadata, and neighboring context for the source panel."""
+    conn = psycopg2.connect(db_url)
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT c.id, c.document_id, c.chunk_index, c.text, c.token_count,
+                       d.filename, d.created_at, d.mime_type, d.file_size_bytes
+                FROM public.chunks c
+                JOIN public.documents d ON d.id = c.document_id
+                WHERE c.id = %s AND d.user_id = %s
+                """,
+                (chunk_id, user_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+
+            doc_id = row["document_id"]
+            ci = row["chunk_index"]
+
+            cur.execute(
+                """
+                SELECT chunk_index, text
+                FROM public.chunks
+                WHERE document_id = %s
+                  AND chunk_index >= %s - 1
+                  AND chunk_index <= %s + 1
+                ORDER BY chunk_index ASC
+                """,
+                (doc_id, ci, ci),
+            )
+            neighbors = cur.fetchall()
+
+        prev_text = ""
+        next_text = ""
+        for nb in neighbors:
+            if nb["chunk_index"] < ci:
+                prev_text = nb["text"]
+            elif nb["chunk_index"] > ci:
+                next_text = nb["text"]
+
+        return {
+            "chunk_id": str(row["id"]),
+            "document_id": str(row["document_id"]),
+            "filename": row["filename"],
+            "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "token_count": row["token_count"],
+            "mime_type": row["mime_type"],
+            "file_size_bytes": row["file_size_bytes"],
+            "uploaded_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "previous_context": prev_text,
+            "next_context": next_text,
+        }
+    finally:
+        conn.close()

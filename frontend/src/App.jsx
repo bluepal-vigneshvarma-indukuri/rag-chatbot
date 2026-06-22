@@ -2,7 +2,6 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import AuthPage from "./pages/AuthPage";
-import DocumentsPage from "./pages/DocumentsPage";
 import ChatPage from "./pages/ChatPage";
 
 function PrivateRoute({ session, children }) {
@@ -11,7 +10,7 @@ function PrivateRoute({ session, children }) {
 }
 
 export default function App() {
-  const [session, setSession] = useState(undefined); // undefined = loading
+  const [session, setSession] = useState(undefined);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -23,8 +22,8 @@ export default function App() {
 
   if (session === undefined)
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
       </div>
     );
 
@@ -32,13 +31,13 @@ export default function App() {
     <Routes>
       <Route
         path="/auth"
-        element={session ? <Navigate to="/documents" replace /> : <AuthPage />}
+        element={session ? <Navigate to="/" replace /> : <AuthPage />}
       />
       <Route
-        path="/documents"
+        path="/"
         element={
           <PrivateRoute session={session}>
-            <DocumentsPage session={session} />
+            <ChatPage session={session} />
           </PrivateRoute>
         }
       />
@@ -50,7 +49,8 @@ export default function App() {
           </PrivateRoute>
         }
       />
-      <Route path="*" element={<Navigate to={session ? "/documents" : "/auth"} replace />} />
+      <Route path="/documents" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to={session ? "/" : "/auth"} replace />} />
     </Routes>
   );
 }

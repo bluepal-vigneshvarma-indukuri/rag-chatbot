@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import psycopg2
+import psycopg2.extras
 
 from auth.middleware import get_current_user
 from config import get_settings
-from .agent import run_agent
+from .agent import run_agent, AgentError
+from retrieval.retriever import get_chunk_detail
 from grounding.validator import validate_answer
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -20,6 +22,14 @@ class ChatRequest(BaseModel):
     question: str
     conversation_id: Optional[str] = None
     document_ids: Optional[List[str]] = None
+    # API settings — supplied by the frontend from user's settings
+    chat_base_url: str = "https://api.groq.com/openai/v1"
+    chat_model: str = "llama-3.3-70b-versatile"
+    chat_api_key: str = ""
+    embed_base_url: str = "https://api.openai.com/v1"
+    embed_model: str = "text-embedding-3-small"
+    embed_api_key: str = ""
+    embed_disabled: bool = False
 
 
 @router.post("/stream")
@@ -46,8 +56,8 @@ async def chat_stream(
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO public.conversations (id, user_id, title, document_ids)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO public.conversations (id, user_id, title, document_ids, updated_at)
+                        VALUES (%s, %s, %s, %s::uuid[], now())
                         """,
                         (conversation_id, user_id, title, req.document_ids or []),
                     )
@@ -71,7 +81,7 @@ async def chat_stream(
         yield _sse("conversation_id", {"conversation_id": conversation_id})
         yield _sse("status", {"message": "Searching documents..."})
 
-        # Run agent in thread pool (Groq SDK is sync)
+        # Run agent in thread pool (all provider SDKs are sync)
         loop = asyncio.get_event_loop()
         try:
             result = await loop.run_in_executor(
@@ -80,10 +90,20 @@ async def chat_stream(
                     question=req.question,
                     user_id=user_id,
                     document_ids=req.document_ids,
+                    chat_base_url=req.chat_base_url,
+                    chat_model=req.chat_model,
+                    chat_api_key=req.chat_api_key,
+                    embed_base_url=req.embed_base_url,
+                    embed_model=req.embed_model,
+                    embed_api_key=req.embed_api_key,
+                    embed_disabled=req.embed_disabled,
                 ),
             )
+        except AgentError as e:
+            yield _sse("error", {"code": e.code, "message": e.message})
+            return
         except Exception as e:
-            yield _sse("error", {"message": f"Agent error: {str(e)}"})
+            yield _sse("error", {"code": "unknown", "message": f"Agent error: {str(e)}"})
             return
 
         yield _sse("status", {"message": "Validating citations..."})
@@ -155,12 +175,24 @@ async def chat_stream(
     )
 
 
+@router.get("/chunks/{chunk_id}")
+async def get_chunk(
+    chunk_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Return full chunk text and metadata for the source context panel."""
+    settings = get_settings()
+    detail = get_chunk_detail(chunk_id, user["id"], settings.database_url)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    return detail
+
+
 @router.get("/conversations")
 async def list_conversations(user: dict = Depends(get_current_user)):
     settings = get_settings()
     conn = psycopg2.connect(settings.database_url)
     try:
-        import psycopg2.extras
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
@@ -185,7 +217,6 @@ async def get_messages(
     settings = get_settings()
     conn = psycopg2.connect(settings.database_url)
     try:
-        import psycopg2.extras
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # Verify ownership
             cur.execute(

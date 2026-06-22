@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { supabase, getAccessToken } from "../lib/supabase";
 import {
   Upload, FileText, MessageSquare, Trash2, CheckCircle2,
-  Clock, AlertCircle, Loader2, LogOut, Plus
+  Clock, AlertCircle, Loader2, LogOut, Plus, Settings,
 } from "lucide-react";
+import SettingsPanel from "../components/SettingsPanel";
+import { useProviderSettings } from "../hooks/useProviderSettings";
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
@@ -27,8 +29,11 @@ export default function DocumentsPage({ session }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState([]);
+  const [showSettings, setShowSettings] = useState(false);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
+
+  const [settings, updateSettings] = useProviderSettings();
 
   useEffect(() => {
     loadDocuments();
@@ -57,6 +62,11 @@ export default function DocumentsPage({ session }) {
     for (const file of files) {
       const form = new FormData();
       form.append("file", file);
+      // Pass embedding settings so chunks are embedded with the user's chosen provider
+      form.append("embed_base_url", settings.embedBaseUrl);
+      form.append("embed_model", settings.embedModel);
+      form.append("embed_api_key", settings.embedApiKey);
+      form.append("embed_disabled", settings.embedDisabled ? "true" : "false");
       try {
         const res = await fetch(`${BACKEND}/documents/upload`, {
           method: "POST",
@@ -90,6 +100,14 @@ export default function DocumentsPage({ session }) {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Settings panel */}
+      <SettingsPanel
+        settings={settings}
+        onUpdate={updateSettings}
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
+
       {/* Header */}
       <header className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -99,6 +117,13 @@ export default function DocumentsPage({ session }) {
           <span className="font-semibold text-white">RAG Chatbot</span>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors"
+            title="Provider Settings"
+          >
+            <Settings className="w-4 h-4" /> Settings
+          </button>
           <span className="text-sm text-gray-400">{session.user.email}</span>
           <button
             onClick={handleSignOut}
@@ -127,14 +152,14 @@ export default function DocumentsPage({ session }) {
               {uploading ? "Uploading…" : "Upload documents"}
             </p>
             <p className="text-sm text-gray-500 mt-1">
-              PDF, DOCX, TXT, code files — up to 20 MB each
+              PDF, DOCX, XLSX, CSV, HTML, TXT, code files — up to 20 MB each
             </p>
           </div>
           <input
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.docx,.txt,.md,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.php,.html,.css,.json,.yaml,.yml,.xml,.csv,.sql"
+            accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.html,.htm,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.php,.css,.json,.yaml,.yml,.xml,.sql"
             className="hidden"
             onChange={handleUpload}
           />

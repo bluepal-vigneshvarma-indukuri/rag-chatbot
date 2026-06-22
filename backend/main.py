@@ -10,6 +10,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 from config import get_settings
 from ingest.router import router as ingest_router
 from chat.router import router as chat_router
+from validate_router import router as validate_router
 
 settings = get_settings()
 
@@ -29,6 +30,7 @@ app.add_middleware(
 
 app.include_router(ingest_router)
 app.include_router(chat_router)
+app.include_router(validate_router)
 
 
 @app.get("/health")
