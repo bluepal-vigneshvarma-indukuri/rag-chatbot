@@ -5,7 +5,6 @@ import {
 import { getAccessToken } from "../lib/supabase";
 import {
   URL_PRESETS,
-  EMBED_URL_PRESETS,
   isLocalUrl,
 } from "../hooks/useProviderSettings";
 
@@ -40,15 +39,6 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
     onUpdate({
       chatBaseUrl: preset.url,
       chatModel: preset.model,
-    });
-    setTestResult(null);
-  }
-
-  function applyEmbedPreset(preset) {
-    onUpdate({
-      embedBaseUrl: preset.url,
-      embedModel: preset.model,
-      embedDisabled: false,
     });
     setTestResult(null);
   }
@@ -171,7 +161,6 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
 
             {!settings.embedDisabled && (
               <>
-                <PresetRow presets={EMBED_URL_PRESETS} onSelect={applyEmbedPreset} />
 
                 <Field label="API Base URL">
                   <input
@@ -301,7 +290,7 @@ function PasswordInput({ value, onChange, show, onToggleShow, placeholder }) {
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className={`${inputCls} pr-10`}
-        autoComplete="off"
+        autoComplete="new-password"
       />
       <button
         type="button"

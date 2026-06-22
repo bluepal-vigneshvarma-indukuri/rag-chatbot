@@ -100,11 +100,11 @@ def run_agent(
     question: str,
     user_id: str,
     document_ids: Optional[List[str]] = None,
-    chat_base_url: str = "https://api.groq.com/openai/v1",
-    chat_model: str = "llama-3.3-70b-versatile",
+    chat_base_url: str = "",
+    chat_model: str = "",
     chat_api_key: str = "",
-    embed_base_url: str = "https://api.openai.com/v1",
-    embed_model: str = "text-embedding-3-small",
+    embed_base_url: str = "",
+    embed_model: str = "",
     embed_api_key: str = "",
     embed_disabled: bool = False,
 ) -> dict:
@@ -115,25 +115,29 @@ def run_agent(
     """
     settings = get_settings()
 
-    # Fall back to .env keys when the user didn't supply their own
-    if not chat_api_key:
-        if is_localhost(chat_base_url):
-            chat_api_key = "not-needed"
-        elif "groq.com" in chat_base_url:
-            chat_api_key = settings.groq_api_key
-        elif "openai.com" in chat_base_url:
-            chat_api_key = settings.openai_api_key
+    # Localhost convenience check
+    if not chat_api_key and is_localhost(chat_base_url):
+        chat_api_key = "not-needed"
 
-    if not embed_api_key and not embed_disabled:
-        if embed_base_url and is_localhost(embed_base_url):
-            embed_api_key = "not-needed"
-        elif "openai.com" in (embed_base_url or ""):
-            embed_api_key = settings.openai_api_key
+    if not embed_api_key and not embed_disabled and embed_base_url and is_localhost(embed_base_url):
+        embed_api_key = "not-needed"
+
+    if not chat_base_url:
+        raise AgentError(
+            "missing_base_url",
+            "No Chat API base URL provided. Please enter it in Settings.",
+        )
+
+    if not chat_model:
+        raise AgentError(
+            "missing_model",
+            "No Chat model name provided. Please enter it in Settings.",
+        )
 
     if not chat_api_key:
         raise AgentError(
             "missing_api_key",
-            "No API key provided. Please enter your API key in Settings.",
+            "No Chat API key provided. Please enter your API key in Settings.",
         )
 
     db_url = settings.database_url
@@ -333,7 +337,7 @@ def _embed_query(
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
-        resp = client.embeddings.create(model=model, input=query)
+        resp = client.embeddings.create(model=model, input=query, dimensions=768)
         return resp.data[0].embedding
     except Exception:
         return None

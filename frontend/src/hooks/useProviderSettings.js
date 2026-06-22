@@ -24,16 +24,12 @@ export const URL_PRESETS = [
   { label: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.3-70b-instruct" },
 ];
 
-export const EMBED_URL_PRESETS = [
-  { label: "OpenAI", url: "https://api.openai.com/v1", model: "text-embedding-3-small" },
-];
-
 export const DEFAULT_SETTINGS = {
-  chatBaseUrl: "https://api.groq.com/openai/v1",
-  chatModel: "llama-3.3-70b-versatile",
+  chatBaseUrl: "",
+  chatModel: "",
   chatApiKey: "",
-  embedBaseUrl: "https://api.openai.com/v1",
-  embedModel: "text-embedding-3-small",
+  embedBaseUrl: "",
+  embedModel: "",
   embedApiKey: "",
   embedDisabled: false,
 };

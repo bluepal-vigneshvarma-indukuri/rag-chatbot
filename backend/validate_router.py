@@ -18,11 +18,11 @@ router = APIRouter(prefix="/validate", tags=["validate"])
 
 
 class ValidateRequest(BaseModel):
-    chat_base_url: str = "https://api.groq.com/openai/v1"
-    chat_model: str = "llama-3.3-70b-versatile"
+    chat_base_url: str = ""
+    chat_model: str = ""
     chat_api_key: str = ""
-    embed_base_url: str = "https://api.openai.com/v1"
-    embed_model: str = "text-embedding-3-small"
+    embed_base_url: str = ""
+    embed_model: str = ""
     embed_api_key: str = ""
     embed_disabled: bool = False
 

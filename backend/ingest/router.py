@@ -60,8 +60,8 @@ async def list_documents(user: dict = Depends(get_current_user)):
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    embed_base_url: str = Form(default="https://api.openai.com/v1"),
-    embed_model: str = Form(default="text-embedding-3-small"),
+    embed_base_url: str = Form(default=""),
+    embed_model: str = Form(default=""),
     embed_api_key: str = Form(default=""),
     embed_disabled: str = Form(default="false"),
     user: dict = Depends(get_current_user),
@@ -118,13 +118,13 @@ async def upload_document(
     finally:
         conn.close()
 
-    embed_disabled_flag = embed_disabled.lower() in ("true", "1", "yes", "on")
+    disabled_bool = embed_disabled.lower() in ("true", "1", "yes", "on")
 
     # Run ingest in background with embed settings captured now
     asyncio.create_task(
         _ingest(
             document_id, file.filename, content,
-            embed_base_url, embed_model, embed_api_key, embed_disabled_flag,
+            embed_base_url, embed_model, embed_api_key, disabled_bool,
         )
     )
 
@@ -135,19 +135,13 @@ async def _ingest(
     document_id: str,
     filename: str,
     content: bytes,
-    embed_base_url: str = "https://api.openai.com/v1",
-    embed_model: str = "text-embedding-3-small",
-    embed_api_key: str = "",
-    embed_disabled: bool = False,
+    embed_base_url: str,
+    embed_model: str,
+    embed_api_key: str,
+    embed_disabled: bool,
 ):
     """Parse → chunk → embed (optional) → insert chunks."""
     settings = get_settings()
-
-    if not embed_api_key and not embed_disabled:
-        if embed_base_url and is_localhost(embed_base_url):
-            embed_api_key = "not-needed"
-        elif "openai.com" in embed_base_url:
-            embed_api_key = settings.openai_api_key
     conn = psycopg2.connect(settings.database_url)
     try:
         # Parse text
@@ -163,7 +157,7 @@ async def _ingest(
 
         # Optional: generate embeddings
         embeddings = await _embed_chunks(
-            chunks, embed_base_url, embed_model, embed_api_key, embed_disabled,
+            chunks, settings, embed_base_url, embed_model, embed_api_key, embed_disabled,
         )
 
         # Insert chunks
@@ -198,27 +192,38 @@ async def _ingest(
 
 async def _embed_chunks(
     chunks: list,
-    base_url: str,
-    model: str,
-    api_key: str,
+    settings,
+    embed_base_url: str,
+    embed_model: str,
+    embed_api_key: str,
     embed_disabled: bool,
 ) -> list:
-    """Generate embeddings for document chunks via OpenAI-compatible API."""
-    if embed_disabled or not base_url or not api_key or not model:
+    """Generate embeddings via specified API provider if configured."""
+    if embed_disabled or not embed_base_url or not embed_model or not embed_api_key:
         return []
 
-    loop = asyncio.get_event_loop()
+    api_key = embed_api_key
+    base_url = embed_base_url
+    model = embed_model
+
+    if not api_key:
+        if is_localhost(base_url):
+            api_key = "not-needed"
+
+    if not api_key:
+        return []
 
     try:
-        def _embed_sync():
-            from openai import OpenAI
-            client = OpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
-            response = client.embeddings.create(model=model, input=chunks)
-            return [item.embedding for item in response.data]
-
-        return await loop.run_in_executor(None, _embed_sync)
-
-    except Exception:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
+        response = await client.embeddings.create(
+            model=model,
+            input=chunks,
+            dimensions=768,
+        )
+        return [item.embedding for item in response.data]
+    except Exception as e:
+        print(f"Embedding generation failed: {e}")
         return []
 
 
