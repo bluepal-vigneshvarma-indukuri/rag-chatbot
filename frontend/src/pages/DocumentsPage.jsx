@@ -30,6 +30,8 @@ export default function DocumentsPage({ session }) {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [notification, setNotification] = useState(null); // { message: string, type: 'success' | 'warning' | 'error' }
+  const [notifiedDocs, setNotifiedDocs] = useState([]);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
@@ -41,6 +43,13 @@ export default function DocumentsPage({ session }) {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
   async function loadDocuments() {
     const token = await getAccessToken();
     if (!token) return;
@@ -48,7 +57,34 @@ export default function DocumentsPage({ session }) {
       const res = await fetch(`${BACKEND}/documents/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) setDocuments(await res.json());
+      if (res.ok) {
+        const docs = await res.json();
+        setDocuments(docs);
+
+        // Check for newly failed embeddings to notify
+        setNotifiedDocs((prev) => {
+          const newNotified = [...prev];
+          let showed = false;
+          docs.forEach((doc) => {
+            if (
+              doc.status === "ready" &&
+              doc.error_message &&
+              doc.error_message.includes("Embedding") &&
+              !prev.includes(doc.id)
+            ) {
+              newNotified.push(doc.id);
+              if (!showed) {
+                setNotification({
+                  type: "warning",
+                  message: `Embeddings failed for "${doc.filename}". The document is stored for keyword search only.`,
+                });
+                showed = true;
+              }
+            }
+          });
+          return newNotified;
+        });
+      }
     } catch {}
   }
 
@@ -75,10 +111,24 @@ export default function DocumentsPage({ session }) {
         });
         if (!res.ok) {
           const data = await res.json();
+          const isDuplicate = res.status === 409;
           setError(data.detail || "Upload failed");
+          setNotification({
+            type: isDuplicate ? "warning" : "error",
+            message: isDuplicate ? "This file has already been uploaded." : (data.detail || "Upload failed"),
+          });
+        } else {
+          setNotification({
+            type: "success",
+            message: `"${file.name}" uploaded successfully!`,
+          });
         }
       } catch (err) {
         setError("Upload failed — is the backend running?");
+        setNotification({
+          type: "error",
+          message: "Upload failed — is the backend running?",
+        });
       }
     }
     setUploading(false);
@@ -174,6 +224,36 @@ export default function DocumentsPage({ session }) {
               className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 underline shrink-0"
             >
               Configure & Verify
+            </button>
+          </div>
+        )}
+
+        {/* Upload Status Notification Banner */}
+        {notification && (
+          <div className={`mb-6 p-4 rounded-2xl border flex items-start justify-between gap-3 text-sm animate-slide-up ${
+            notification.type === 'success' 
+              ? 'bg-emerald-950/20 border-emerald-800 text-emerald-300' 
+              : notification.type === 'warning' 
+              ? 'bg-amber-950/20 border-amber-800 text-amber-300' 
+              : 'bg-red-950/20 border-red-800 text-red-300'
+          }`}>
+            <div className="flex items-start gap-2.5">
+              {notification.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />}
+              {notification.type === 'warning' && <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />}
+              {notification.type === 'error' && <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />}
+              <div className="flex flex-col">
+                <span className="font-semibold text-white">
+                  {notification.type === 'success' ? 'Success' : notification.type === 'warning' ? 'Attention Required' : 'Upload Failed'}
+                </span>
+                <span className="text-xs mt-1 text-gray-300 whitespace-pre-wrap">{notification.message}</span>
+              </div>
+            </div>
+            <button 
+              type="button" 
+              onClick={() => setNotification(null)}
+              className="text-gray-400 hover:text-white transition-colors shrink-0 text-sm focus:outline-none"
+            >
+              ✕
             </button>
           </div>
         )}
@@ -301,13 +381,26 @@ export default function DocumentsPage({ session }) {
                     {new Date(doc.created_at).toLocaleDateString()}
                   </p>
                   {doc.error_message && (
-                    <p className="text-xs text-red-400 mt-0.5 truncate">{doc.error_message}</p>
+                    <p className={`text-xs mt-0.5 truncate ${doc.status === "ready" ? "text-amber-400" : "text-red-400"}`}>
+                      {doc.status === "ready" 
+                        ? `Embeddings failed (keyword search only): ${doc.error_message}` 
+                        : doc.error_message}
+                    </p>
                   )}
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {STATUS_ICONS[doc.status]}
-                  <span className="text-xs text-gray-400">{STATUS_LABELS[doc.status]}</span>
+                  {doc.status === "ready" && doc.error_message && doc.error_message.includes("Embedding") ? (
+                    <>
+                      <AlertCircle className="w-4 h-4 text-amber-500" />
+                      <span className="text-xs text-amber-400 font-medium" title={doc.error_message}>Keyword Only</span>
+                    </>
+                  ) : (
+                    <>
+                      {STATUS_ICONS[doc.status]}
+                      <span className="text-xs text-gray-400">{STATUS_LABELS[doc.status]}</span>
+                    </>
+                  )}
                 </div>
 
                 {/* Delete button */}
@@ -331,6 +424,8 @@ export default function DocumentsPage({ session }) {
           </p>
         )}
       </main>
+
+
     </div>
   );
 }

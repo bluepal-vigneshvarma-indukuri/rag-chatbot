@@ -199,14 +199,16 @@ async def _ingest(
             print(f"Failed to query embedding dimension from DB: {e}")
 
         # Optional: generate embeddings
-        embeddings = await _embed_chunks(
+        embeddings, embedding_err = await _embed_chunks(
             chunks, settings, embed_base_url, embed_model, embed_api_key, embed_disabled, db_dimension
         )
+        if embedding_err:
+            embedding_err = f"Embedding generation failed: {embedding_err}"
 
         # Insert chunks
         with conn.cursor() as cur:
             for i, chunk_text in enumerate(chunks):
-                emb = embeddings[i] if embeddings else None
+                emb = embeddings[i] if (embeddings and i < len(embeddings)) else None
                 cur.execute(
                     """
                     INSERT INTO public.chunks (document_id, chunk_index, text, embedding, token_count)
@@ -215,14 +217,14 @@ async def _ingest(
                     """,
                     (document_id, i, chunk_text, emb, len(chunk_text.split())),
                 )
-            # Update document status and chunk count
+            # Update document status, chunk count and error message (for warning details)
             cur.execute(
                 """
                 UPDATE public.documents
-                SET status = 'ready', chunk_count = %s, updated_at = now()
+                SET status = 'ready', chunk_count = %s, error_message = %s, updated_at = now()
                 WHERE id = %s
                 """,
-                (len(chunks), document_id),
+                (len(chunks), embedding_err, document_id),
             )
         conn.commit()
 
@@ -241,10 +243,10 @@ async def _embed_chunks(
     embed_api_key: str,
     embed_disabled: bool,
     db_dimension: int,
-) -> list:
-    """Generate embeddings via specified API provider if configured."""
+) -> tuple[list, str | None]:
+    """Generate embeddings via specified API provider if configured. Processes chunks in batches of 50."""
     if embed_disabled or not embed_base_url or not embed_model or not embed_api_key:
-        return []
+        return [], None
 
     api_key = embed_api_key
     base_url = embed_base_url
@@ -255,39 +257,48 @@ async def _embed_chunks(
             api_key = "not-needed"
 
     if not api_key:
-        return []
+        return [], None
+
+    batch_size = 50
+    embeddings = []
 
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
         try:
-            # Try with dimensions argument first
-            response = await client.embeddings.create(
-                model=model,
-                input=chunks,
-                dimensions=db_dimension,
-            )
-            return [item.embedding for item in response.data]
+            # Try with dimensions argument first in batches of 50
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i:i + batch_size]
+                response = await client.embeddings.create(
+                    model=model,
+                    input=batch,
+                    dimensions=db_dimension,
+                )
+                embeddings.extend([item.embedding for item in response.data])
+            return embeddings, None
         except Exception as e:
             err_msg = str(e).lower()
             if any(k in err_msg for k in ("dimension", "extra fields", "unexpected keyword argument", "parameter")):
-                # Fallback: retry without dimensions argument
-                response = await client.embeddings.create(
-                    model=model,
-                    input=chunks,
-                )
-                embeddings = [item.embedding for item in response.data]
+                # Fallback: retry without dimensions argument in batches of 50
+                embeddings = []
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:i + batch_size]
+                    response = await client.embeddings.create(
+                        model=model,
+                        input=batch,
+                    )
+                    embeddings.extend([item.embedding for item in response.data])
                 if embeddings and len(embeddings[0]) != db_dimension:
                     raise ValueError(
                         f"Embedding model '{model}' returned vector of dimension {len(embeddings[0])}, "
                         f"but the database requires exactly {db_dimension} dimensions. Truncation is not supported by this model."
                     )
-                return embeddings
+                return embeddings, None
             else:
                 raise e
     except Exception as e:
         print(f"Embedding generation failed: {e}")
-        return []
+        return [], str(e)
 
 
 @router.delete("/{document_id}")

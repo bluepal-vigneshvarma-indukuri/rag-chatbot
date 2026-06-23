@@ -19,3 +19,18 @@
 .prose-chat ul { @apply list-disc pl-5 mb-2; }
 .prose-chat ol { @apply list-decimal pl-5 mb-2; }
 .prose-chat strong { @apply font-semibold text-gray-900; }
+
+@keyframes slideUp {
+  from {
+    transform: translateY(1rem);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
