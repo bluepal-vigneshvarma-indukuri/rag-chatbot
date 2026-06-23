@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase, getAccessToken } from "../lib/supabase";
 import {
   Send, MessageSquare, Loader2, AlertCircle, Settings,
-  Plus, Paperclip,   Pin, ChevronDown, LogOut, FileText,
-  CheckCircle2,
+  Plus, Paperclip, Pin, ChevronDown, LogOut, FileText,
+  CheckCircle2, Trash2,
 } from "lucide-react";
 import SettingsPanel from "../components/SettingsPanel";
 import SourcePanel from "../components/SourcePanel";
@@ -310,6 +310,38 @@ export default function ChatPage({ session }) {
     });
   }
 
+  async function deleteConversation(e, convId) {
+    e.stopPropagation();
+    if (!window.confirm("Delete this conversation? This cannot be undone.")) return;
+    const token = await getAccessToken();
+    try {
+      await fetch(`${BACKEND}/chat/conversations/${convId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (conversationId === convId) {
+        setConversationId(null);
+        setMessages([]);
+        setActiveCitation(null);
+      }
+      await loadConversations();
+    } catch { /* ignore */ }
+  }
+
+  async function deleteDocument(e, docId) {
+    e.stopPropagation();
+    if (!window.confirm("Delete this document and all its chunks? This cannot be undone.")) return;
+    const token = await getAccessToken();
+    try {
+      await fetch(`${BACKEND}/documents/${docId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setPinnedDocIds((prev) => prev.filter((id) => id !== docId));
+      await loadDocuments();
+    } catch { /* ignore */ }
+  }
+
   const convGroups = groupConversations(conversations);
   const readyDocs = documents.filter((d) => d.status === "ready");
   const activeQuestion = [...messages].reverse().find((m) => m.role === "user")?.content;
@@ -361,17 +393,30 @@ export default function ChatPage({ session }) {
                 {group.label}
               </p>
               {group.items.map((conv) => (
-                <button
+                <div
                   key={conv.id}
-                  onClick={() => loadConversation(conv)}
-                  className={`w-full text-left text-sm rounded-lg px-3 py-2 truncate transition-colors ${
+                  className={`group relative flex items-center rounded-lg transition-colors ${
                     conversationId === conv.id
-                      ? "bg-white text-gray-900 shadow-sm border border-gray-200"
-                      : "text-gray-600 hover:bg-gray-200/60"
+                      ? "bg-white shadow-sm border border-gray-200"
+                      : "hover:bg-gray-200/60"
                   }`}
                 >
-                  {conv.title || "Untitled chat"}
-                </button>
+                  <button
+                    onClick={() => loadConversation(conv)}
+                    className="flex-1 text-left text-sm px-3 py-2 truncate"
+                  >
+                    <span className={conversationId === conv.id ? "text-gray-900" : "text-gray-600"}>
+                      {conv.title || "Untitled chat"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={(e) => deleteConversation(e, conv.id)}
+                    className="opacity-0 group-hover:opacity-100 shrink-0 p-1.5 mr-1 text-gray-400 hover:text-red-500 rounded transition-all"
+                    title="Delete conversation"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               ))}
             </div>
           ))}
@@ -436,21 +481,46 @@ export default function ChatPage({ session }) {
 
           {/* ── Input bar ── */}
           <div className="border-t border-gray-200 px-6 py-4 bg-white">
+            {(!settings.chatVerified || !settings.embedVerified) && (
+              <div className="max-w-3xl mx-auto mb-3 bg-red-50 border border-red-200 text-red-800 text-xs px-3 py-2 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>
+                    {!settings.chatVerified && !settings.embedVerified
+                      ? "Both Chat and Embedding connections must be verified in Settings to start uploading and chatting."
+                      : !settings.chatVerified
+                      ? "Chat API connection must be verified in Settings to send messages."
+                      : "Embedding API connection must be verified in Settings to upload documents."}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(true)}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-500 underline shrink-0"
+                >
+                  Configure & Verify
+                </button>
+              </div>
+            )}
             <form onSubmit={sendMessage} className="max-w-3xl mx-auto">
               <div className="flex items-center gap-2 mb-2">
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
+                  onClick={() => {
+                    if (settings.embedVerified) {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  disabled={uploading || !settings.embedVerified}
                   className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 transition-colors disabled:opacity-50"
-                  title="Upload document"
+                  title={settings.embedVerified ? "Upload document" : "Verify embedding API connection in Settings first"}
                 >
                   {uploading ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
                     <Paperclip className="w-3.5 h-3.5" />
                   )}
-                  Upload
+                  {settings.embedVerified ? "Upload" : "Upload (Verify Connection First)"}
                 </button>
 
                 <div className="relative" ref={pinMenuRef}>
@@ -499,7 +569,15 @@ export default function ChatPage({ session }) {
                                 <CheckCircle2 className="w-3 h-3 text-white" />
                               )}
                             </span>
-                            <span className="truncate text-gray-700">{doc.filename}</span>
+                            <span className="flex-1 truncate text-gray-700">{doc.filename}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => deleteDocument(e, doc.id)}
+                              className="shrink-0 p-0.5 text-gray-300 hover:text-red-500 rounded transition-colors"
+                              title="Delete document"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </button>
                         ))
                       )}
@@ -509,7 +587,7 @@ export default function ChatPage({ session }) {
 
                 {documents.some((d) => d.status === "processing") && (
                   <span className="text-xs text-gray-400 flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     Processing…
                   </span>
                 )}
@@ -522,17 +600,19 @@ export default function ChatPage({ session }) {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      sendMessage(e);
+                      if (settings.chatVerified) {
+                        sendMessage(e);
+                      }
                     }
                   }}
-                  placeholder="Ask about your documents…"
-                  disabled={streaming}
+                  placeholder={settings.chatVerified ? "Ask about your documents…" : "Verify chat connection in settings first to start chatting…"}
+                  disabled={streaming || !settings.chatVerified}
                   rows={1}
                   className="flex-1 resize-none text-sm text-gray-900 placeholder-gray-400 focus:outline-none bg-transparent disabled:opacity-50 max-h-32"
                 />
                 <button
                   type="submit"
-                  disabled={!input.trim() || streaming}
+                  disabled={!input.trim() || streaming || !settings.chatVerified}
                   className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white p-2 rounded-xl transition-colors shrink-0"
                 >
                   {streaming ? (

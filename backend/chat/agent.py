@@ -269,8 +269,29 @@ def _execute_tool(
         if not query:
             return json.dumps({"error": "query is required"})
 
+        # Get DB embedding dimension
+        db_dimension = 1536  # default fallback
+        import psycopg2
+        try:
+            conn = psycopg2.connect(db_url)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT atttypmod 
+                        FROM pg_attribute 
+                        WHERE attrelid = 'public.chunks'::regclass 
+                          AND attname = 'embedding';
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] > 0:
+                        db_dimension = row[0]
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"Failed to query embedding dimension from DB: {e}")
+
         query_embedding = _embed_query(
-            query, embed_base_url, embed_model, embed_api_key, embed_disabled,
+            query, embed_base_url, embed_model, embed_api_key, embed_disabled, db_dimension
         )
 
         chunks = hybrid_search(
@@ -330,6 +351,7 @@ def _embed_query(
     model: str,
     api_key: str,
     embed_disabled: bool,
+    db_dimension: int,
 ) -> Optional[List[float]]:
     """Embed a query string for vector search. Returns None on failure (falls back to FTS)."""
     if embed_disabled or not base_url or not api_key or not model:
@@ -337,9 +359,33 @@ def _embed_query(
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
-        resp = client.embeddings.create(model=model, input=query, dimensions=768)
-        return resp.data[0].embedding
-    except Exception:
+        try:
+            # Try with dimensions argument first
+            resp = client.embeddings.create(
+                model=model,
+                input=query,
+                dimensions=db_dimension,
+            )
+            return resp.data[0].embedding
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(k in err_msg for k in ("dimension", "extra fields", "unexpected keyword argument", "parameter")):
+                # Fallback: retry without dimensions argument
+                resp = client.embeddings.create(
+                    model=model,
+                    input=query,
+                )
+                embedding = resp.data[0].embedding
+                if len(embedding) != db_dimension:
+                    raise ValueError(
+                        f"Embedding model '{model}' returned vector of dimension {len(embedding)}, "
+                        f"but database requires exactly {db_dimension} dimensions."
+                    )
+                return embedding
+            else:
+                raise e
+    except Exception as e:
+        print(f"Query embedding generation failed: {e}")
         return None
 
 

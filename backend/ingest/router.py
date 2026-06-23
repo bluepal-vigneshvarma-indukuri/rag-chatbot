@@ -1,6 +1,7 @@
 """Upload and ingest endpoints."""
 import uuid
 import asyncio
+import hashlib
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 import psycopg2
@@ -79,11 +80,37 @@ async def upload_document(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
 
-    document_id = str(uuid.uuid4())
+    # SHA-256 duplicate detection
+    content_hash = hashlib.sha256(content).hexdigest()
     user_id = user["id"]
-    storage_path = f"{user_id}/{document_id}/{file.filename}"
 
     settings = get_settings()
+    conn_check = psycopg2.connect(settings.database_url)
+    try:
+        with conn_check.cursor() as cur:
+            cur.execute(
+                """
+                SELECT filename FROM public.documents
+                WHERE user_id = %s AND content_hash = %s
+                LIMIT 1
+                """,
+                (user_id, content_hash),
+            )
+            existing = cur.fetchone()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Duplicate file: this document has already been uploaded as '{existing[0]}'.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # If hash column doesn't exist yet, skip check gracefully
+    finally:
+        conn_check.close()
+
+    document_id = str(uuid.uuid4())
+    storage_path = f"{user_id}/{document_id}/{file.filename}"
 
     # Upload raw file to Supabase Storage
     try:
@@ -104,11 +131,11 @@ async def upload_document(
             cur.execute(
                 """
                 INSERT INTO public.documents
-                  (id, user_id, filename, mime_type, file_size_bytes, storage_path, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'processing')
+                  (id, user_id, filename, mime_type, file_size_bytes, storage_path, status, content_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, 'processing', %s)
                 """,
                 (document_id, user_id, file.filename, file.content_type,
-                 len(content), storage_path),
+                 len(content), storage_path, content_hash),
             )
         conn.commit()
     except Exception as e:
@@ -155,9 +182,25 @@ async def _ingest(
             _mark_failed(conn, document_id, "No chunks generated from text")
             return
 
+        # Get DB embedding dimension
+        db_dimension = 1536  # default fallback
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT atttypmod 
+                    FROM pg_attribute 
+                    WHERE attrelid = 'public.chunks'::regclass 
+                      AND attname = 'embedding';
+                """)
+                row = cur.fetchone()
+                if row and row[0] > 0:
+                    db_dimension = row[0]
+        except Exception as e:
+            print(f"Failed to query embedding dimension from DB: {e}")
+
         # Optional: generate embeddings
         embeddings = await _embed_chunks(
-            chunks, settings, embed_base_url, embed_model, embed_api_key, embed_disabled,
+            chunks, settings, embed_base_url, embed_model, embed_api_key, embed_disabled, db_dimension
         )
 
         # Insert chunks
@@ -197,6 +240,7 @@ async def _embed_chunks(
     embed_model: str,
     embed_api_key: str,
     embed_disabled: bool,
+    db_dimension: int,
 ) -> list:
     """Generate embeddings via specified API provider if configured."""
     if embed_disabled or not embed_base_url or not embed_model or not embed_api_key:
@@ -216,15 +260,79 @@ async def _embed_chunks(
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
-        response = await client.embeddings.create(
-            model=model,
-            input=chunks,
-            dimensions=768,
-        )
-        return [item.embedding for item in response.data]
+        try:
+            # Try with dimensions argument first
+            response = await client.embeddings.create(
+                model=model,
+                input=chunks,
+                dimensions=db_dimension,
+            )
+            return [item.embedding for item in response.data]
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(k in err_msg for k in ("dimension", "extra fields", "unexpected keyword argument", "parameter")):
+                # Fallback: retry without dimensions argument
+                response = await client.embeddings.create(
+                    model=model,
+                    input=chunks,
+                )
+                embeddings = [item.embedding for item in response.data]
+                if embeddings and len(embeddings[0]) != db_dimension:
+                    raise ValueError(
+                        f"Embedding model '{model}' returned vector of dimension {len(embeddings[0])}, "
+                        f"but the database requires exactly {db_dimension} dimensions. Truncation is not supported by this model."
+                    )
+                return embeddings
+            else:
+                raise e
     except Exception as e:
         print(f"Embedding generation failed: {e}")
         return []
+
+
+@router.delete("/{document_id}")
+async def delete_document(
+    document_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Delete a document, its chunks/embeddings, and the file from Supabase Storage."""
+    settings = get_settings()
+    conn = psycopg2.connect(settings.database_url)
+    storage_path = None
+    try:
+        with conn.cursor() as cur:
+            # Verify ownership and get storage path
+            cur.execute(
+                "SELECT storage_path FROM public.documents WHERE id = %s AND user_id = %s",
+                (document_id, user["id"]),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Document not found")
+            storage_path = row[0]
+            # Delete chunks first (embeddings cascade)
+            cur.execute("DELETE FROM public.chunks WHERE document_id = %s", (document_id,))
+            # Delete document record
+            cur.execute("DELETE FROM public.documents WHERE id = %s", (document_id,))
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"DB delete failed: {e}")
+    finally:
+        conn.close()
+
+    # Remove file from Supabase Storage (best-effort)
+    if storage_path:
+        try:
+            from supabase import create_client
+            sb = create_client(settings.supabase_url, settings.supabase_service_role_key)
+            sb.storage.from_("uploads").remove([storage_path])
+        except Exception as e:
+            print(f"Storage delete warning (non-fatal): {e}")
+
+    return {"status": "deleted"}
 
 
 def _mark_failed(conn, document_id: str, reason: str):

@@ -86,6 +86,27 @@ export default function DocumentsPage({ session }) {
     await loadDocuments();
   }
 
+  async function handleDelete(e, docId) {
+    e.stopPropagation();
+    if (!window.confirm("Delete this document and all its chunks? This cannot be undone.")) return;
+    const token = await getAccessToken();
+    try {
+      const res = await fetch(`${BACKEND}/documents/${docId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.detail || "Delete failed");
+      } else {
+        setSelected((prev) => prev.filter((id) => id !== docId));
+        await loadDocuments();
+      }
+    } catch {
+      setError("Delete failed — is the backend running?");
+    }
+  }
+
   function toggleSelect(id) {
     setSelected((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -135,21 +156,56 @@ export default function DocumentsPage({ session }) {
       </header>
 
       <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-10">
+        {(!settings.chatVerified || !settings.embedVerified) && (
+          <div className="mb-6 bg-red-950/20 border border-red-800 text-red-300 text-xs px-3 py-2 rounded-xl flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <span>
+                {!settings.chatVerified && !settings.embedVerified
+                  ? "Both Chat and Embedding connections must be verified in Settings to start uploading and chatting."
+                  : !settings.chatVerified
+                  ? "Chat API connection must be verified in Settings to enable chatting."
+                  : "Embedding API connection must be verified in Settings to enable uploading."}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 underline shrink-0"
+            >
+              Configure & Verify
+            </button>
+          </div>
+        )}
+
         {/* Upload zone */}
         <div
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-gray-700 hover:border-indigo-500 rounded-2xl p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors mb-8 group"
+          onClick={() => {
+            if (settings.embedVerified) {
+              fileInputRef.current?.click();
+            }
+          }}
+          className={`border-2 border-dashed rounded-2xl p-10 flex flex-col items-center gap-3 transition-colors mb-8 group ${
+            settings.embedVerified
+              ? "border-gray-700 hover:border-indigo-500 cursor-pointer"
+              : "border-red-950/40 bg-red-950/10 cursor-not-allowed"
+          }`}
+          title={settings.embedVerified ? "Upload documents" : "Verify embedding API connection in Settings first"}
         >
           <div className="w-14 h-14 rounded-2xl bg-gray-800 group-hover:bg-indigo-950 flex items-center justify-center transition-colors">
             {uploading ? (
               <Loader2 className="w-7 h-7 text-indigo-400 animate-spin" />
             ) : (
-              <Upload className="w-7 h-7 text-gray-400 group-hover:text-indigo-400 transition-colors" />
+              <Upload className={`w-7 h-7 transition-colors ${settings.embedVerified ? "text-gray-400 group-hover:text-indigo-400" : "text-red-400/60"}`} />
             )}
           </div>
           <div className="text-center">
-            <p className="text-white font-medium">
-              {uploading ? "Uploading…" : "Upload documents"}
+            <p className={`font-medium ${settings.embedVerified ? "text-white" : "text-red-400"}`}>
+              {uploading
+                ? "Uploading…"
+                : settings.embedVerified
+                  ? "Upload documents"
+                  : "Verify Embedding Connection in Settings first to upload"}
             </p>
             <p className="text-sm text-gray-500 mt-1">
               PDF, DOCX, XLSX, CSV, HTML, TXT, code files — up to 20 MB each
@@ -159,6 +215,7 @@ export default function DocumentsPage({ session }) {
             ref={fileInputRef}
             type="file"
             multiple
+            disabled={!settings.embedVerified}
             accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.html,.htm,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.php,.css,.json,.yaml,.yml,.xml,.sql"
             className="hidden"
             onChange={handleUpload}
@@ -181,13 +238,19 @@ export default function DocumentsPage({ session }) {
             </h2>
             {readyCount > 0 && (
               <button
-                onClick={() =>
-                  navigate("/chat", { state: { documentIds: selected.length ? selected : null } })
-                }
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                onClick={() => {
+                  if (settings.chatVerified) {
+                    navigate("/chat", { state: { documentIds: selected.length ? selected : null } });
+                  }
+                }}
+                disabled={!settings.chatVerified}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                title={settings.chatVerified ? "Start chatting" : "Verify chat API connection in Settings first"}
               >
                 <MessageSquare className="w-4 h-4" />
-                {selected.length ? `Chat with ${selected.length} selected` : "Start chatting"}
+                {settings.chatVerified
+                  ? selected.length ? `Chat with ${selected.length} selected` : "Start chatting"
+                  : "Start Chatting (Verify Connection First)"}
               </button>
             )}
           </div>
@@ -205,7 +268,7 @@ export default function DocumentsPage({ session }) {
               <div
                 key={doc.id}
                 onClick={() => doc.status === "ready" && toggleSelect(doc.id)}
-                className={`flex items-center gap-4 p-4 rounded-xl border transition-colors ${
+                className={`group flex items-center gap-4 p-4 rounded-xl border transition-colors ${
                   doc.status === "ready" ? "cursor-pointer" : "cursor-default"
                 } ${
                   selected.includes(doc.id)
@@ -246,6 +309,16 @@ export default function DocumentsPage({ session }) {
                   {STATUS_ICONS[doc.status]}
                   <span className="text-xs text-gray-400">{STATUS_LABELS[doc.status]}</span>
                 </div>
+
+                {/* Delete button */}
+                <button
+                  type="button"
+                  onClick={(e) => handleDelete(e, doc.id)}
+                  className="shrink-0 p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-950/30 transition-colors opacity-0 group-hover:opacity-100"
+                  title="Delete document"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             ))}
           </div>

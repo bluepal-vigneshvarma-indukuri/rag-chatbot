@@ -21,7 +21,6 @@ function canTestChat(settings) {
 }
 
 function canTestEmbed(settings) {
-  if (settings.embedDisabled) return true;
   if (!settings.embedBaseUrl?.trim() || !settings.embedModel?.trim()) return false;
   if (settings.embedApiKey) return true;
   return isLocalUrl(settings.embedBaseUrl);
@@ -39,6 +38,7 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
     onUpdate({
       chatBaseUrl: preset.url,
       chatModel: preset.model,
+      chatVerified: false,
     });
     setTestResult(null);
   }
@@ -66,6 +66,12 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
       });
       const data = await res.json();
       setTestResult(data);
+      if (res.ok) {
+        onUpdate({
+          chatVerified: data.chat?.status === "ok",
+          embedVerified: data.embed?.status === "ok",
+        });
+      }
     } catch (err) {
       setTestResult({ _error: err.message });
     } finally {
@@ -102,7 +108,7 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
               <input
                 type="url"
                 value={settings.chatBaseUrl}
-                onChange={(e) => { onUpdate({ chatBaseUrl: e.target.value }); setTestResult(null); }}
+                onChange={(e) => { onUpdate({ chatBaseUrl: e.target.value, chatVerified: false }); setTestResult(null); }}
                 placeholder="https://api.groq.com/openai/v1"
                 className={inputCls}
               />
@@ -113,7 +119,7 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
               <input
                 type="text"
                 value={settings.chatModel}
-                onChange={(e) => { onUpdate({ chatModel: e.target.value }); setTestResult(null); }}
+                onChange={(e) => { onUpdate({ chatModel: e.target.value, chatVerified: false }); setTestResult(null); }}
                 placeholder="llama-3.3-70b-versatile"
                 className={inputCls}
               />
@@ -123,7 +129,7 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
             <Field label="API Key">
               <PasswordInput
                 value={settings.chatApiKey}
-                onChange={(v) => { onUpdate({ chatApiKey: v }); setTestResult(null); }}
+                onChange={(v) => { onUpdate({ chatApiKey: v, chatVerified: false }); setTestResult(null); }}
                 show={showChatKey}
                 onToggleShow={() => setShowChatKey((p) => !p)}
                 placeholder={
@@ -146,66 +152,44 @@ export default function SettingsPanel({ settings, onUpdate, isOpen, onClose }) {
               Changing embedding settings after uploading documents may reduce search quality. Re-upload documents to apply a new embedding model.
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer">
+            <Field label="API Base URL">
               <input
-                type="checkbox"
-                checked={settings.embedDisabled}
-                onChange={(e) => {
-                  onUpdate({ embedDisabled: e.target.checked });
-                  setTestResult(null);
-                }}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                type="url"
+                value={settings.embedBaseUrl}
+                onChange={(e) => { onUpdate({ embedBaseUrl: e.target.value, embedVerified: false }); setTestResult(null); }}
+                placeholder="https://api.openai.com/v1"
+                className={inputCls}
               />
-              <span className="text-sm text-gray-700">Text search only (no embeddings)</span>
-            </label>
+              <p className="text-xs text-gray-500 mt-1">{URL_HINT}</p>
+            </Field>
 
-            {!settings.embedDisabled && (
-              <>
+            <Field label="Model">
+              <input
+                type="text"
+                value={settings.embedModel}
+                onChange={(e) => { onUpdate({ embedModel: e.target.value, embedVerified: false }); setTestResult(null); }}
+                placeholder="text-embedding-3-small"
+                className={inputCls}
+              />
+              <p className="text-xs text-gray-500 mt-1">{EMBED_MODEL_HINT}</p>
+            </Field>
 
-                <Field label="API Base URL">
-                  <input
-                    type="url"
-                    value={settings.embedBaseUrl}
-                    onChange={(e) => { onUpdate({ embedBaseUrl: e.target.value }); setTestResult(null); }}
-                    placeholder="https://api.openai.com/v1"
-                    className={inputCls}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">{URL_HINT}</p>
-                </Field>
-
-                <Field label="Model">
-                  <input
-                    type="text"
-                    value={settings.embedModel}
-                    onChange={(e) => { onUpdate({ embedModel: e.target.value }); setTestResult(null); }}
-                    placeholder="text-embedding-3-small"
-                    className={inputCls}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">{EMBED_MODEL_HINT}</p>
-                </Field>
-
-                <Field label="API Key">
-                  <PasswordInput
-                    value={settings.embedApiKey}
-                    onChange={(v) => { onUpdate({ embedApiKey: v }); setTestResult(null); }}
-                    show={showEmbedKey}
-                    onToggleShow={() => setShowEmbedKey((p) => !p)}
-                    placeholder={
-                      isLocalUrl(settings.embedBaseUrl)
-                        ? "Optional for local servers"
-                        : "Your embedding API key"
-                    }
-                  />
-                  {testResult?.embed && (
-                    <StatusBadge result={testResult.embed} />
-                  )}
-                </Field>
-              </>
-            )}
-
-            {settings.embedDisabled && testResult?.embed && (
-              <StatusBadge result={testResult.embed} />
-            )}
+            <Field label="API Key">
+              <PasswordInput
+                value={settings.embedApiKey}
+                onChange={(v) => { onUpdate({ embedApiKey: v, embedVerified: false }); setTestResult(null); }}
+                show={showEmbedKey}
+                onToggleShow={() => setShowEmbedKey((p) => !p)}
+                placeholder={
+                  isLocalUrl(settings.embedBaseUrl)
+                    ? "Optional for local servers"
+                    : "Your embedding API key"
+                }
+              />
+              {testResult?.embed && (
+                <StatusBadge result={testResult.embed} />
+              )}
+            </Field>
           </Section>
 
           <div className="space-y-3">

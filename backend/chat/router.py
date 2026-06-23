@@ -240,5 +240,36 @@ async def get_messages(
         conn.close()
 
 
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Delete a conversation and all its messages."""
+    settings = get_settings()
+    conn = psycopg2.connect(settings.database_url)
+    try:
+        with conn.cursor() as cur:
+            # Verify ownership
+            cur.execute(
+                "SELECT id FROM public.conversations WHERE id = %s AND user_id = %s",
+                (conversation_id, user["id"]),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            # Messages cascade via FK, but delete explicitly for safety
+            cur.execute("DELETE FROM public.messages WHERE conversation_id = %s", (conversation_id,))
+            cur.execute("DELETE FROM public.conversations WHERE id = %s", (conversation_id,))
+        conn.commit()
+        return {"status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
+    finally:
+        conn.close()
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"

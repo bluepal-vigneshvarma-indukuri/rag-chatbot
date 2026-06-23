@@ -28,9 +28,11 @@ export const DEFAULT_SETTINGS = {
   chatBaseUrl: "",
   chatModel: "",
   chatApiKey: "",
+  chatVerified: false,
   embedBaseUrl: "",
   embedModel: "",
   embedApiKey: "",
+  embedVerified: false,
   embedDisabled: false,
 };
 
@@ -42,10 +44,9 @@ function migrateSettings(raw) {
   }
   if (!raw.embedBaseUrl && raw.embedProvider) {
     merged.embedBaseUrl = LEGACY_EMBED_URLS[raw.embedProvider] ?? DEFAULT_SETTINGS.embedBaseUrl;
-    if (raw.embedProvider === "none") {
-      merged.embedDisabled = true;
-    }
   }
+
+  merged.embedDisabled = false;
 
   delete merged.chatProvider;
   delete merged.embedProvider;
