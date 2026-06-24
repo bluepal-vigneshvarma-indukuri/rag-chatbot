@@ -123,12 +123,13 @@ export default function DocumentsPage({ session }) {
       form.append("embed_api_key", settings.embedApiKey);
       form.append("embed_disabled", settings.embedDisabled ? "true" : "false");
       try {
-        const res = await fetch(`${BACKEND}/documents/upload`, {
+        const res = await fetch(`${BACKEND}/documents/upload-sync`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: form,
         });
         if (!res.ok) {
+          console.log("132", "[TOAST] Upload failed for", file.name, "with status", res.status);
           const data = await res.json();
           const isDuplicate = res.status === 409;
           setError(data.detail || "Upload failed");
@@ -138,11 +139,34 @@ export default function DocumentsPage({ session }) {
             message: isDuplicate ? "This file has already been uploaded." : (data.detail || "Upload failed"),
           });
         } else {
-          console.log("[TOAST] Setting success notification for", file.name);
-          setNotification({
-            type: "success",
-            message: `"${file.name}" uploaded successfully!`,
-          });
+          const data = await res.json();
+          console.log("[TOAST] Synchronous upload complete", data);
+
+          // Add this document ID to notifiedDocs to prevent background polling double-toast
+          if (data.id) {
+            setNotifiedDocs((prev) => {
+              const next = new Set(prev);
+              next.add(data.id);
+              return next;
+            });
+          }
+
+          if (data.status === "failed") {
+            setNotification({
+              type: "error",
+              message: `Failed to process "${file.name}": ${data.error_message || "Unknown error"}`,
+            });
+          } else if (data.error_message && data.error_message.includes("Embedding")) {
+            setNotification({
+              type: "warning",
+              message: `Embeddings failed for "${file.name}". Stored for keyword search only.`,
+            });
+          } else {
+            setNotification({
+              type: "success",
+              message: `Successfully processed "${file.name}"!`,
+            });
+          }
         }
       } catch (err) {
         setError("Upload failed — is the backend running?");
