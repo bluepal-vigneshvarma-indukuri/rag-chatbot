@@ -228,33 +228,35 @@ export default function DocumentsPage({ session }) {
           </div>
         )}
 
-        {/* Upload Status Notification Banner */}
+        {/* Upload Status Notification Popup (Toast) */}
         {notification && (
-          <div className={`mb-6 p-4 rounded-2xl border flex items-start justify-between gap-3 text-sm animate-slide-up ${
-            notification.type === 'success' 
-              ? 'bg-emerald-950/20 border-emerald-800 text-emerald-300' 
-              : notification.type === 'warning' 
-              ? 'bg-amber-950/20 border-amber-800 text-amber-300' 
-              : 'bg-red-950/20 border-red-800 text-red-300'
-          }`}>
-            <div className="flex items-start gap-2.5">
-              {notification.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />}
-              {notification.type === 'warning' && <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />}
-              {notification.type === 'error' && <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />}
-              <div className="flex flex-col">
-                <span className="font-semibold text-white">
-                  {notification.type === 'success' ? 'Success' : notification.type === 'warning' ? 'Attention Required' : 'Upload Failed'}
-                </span>
-                <span className="text-xs mt-1 text-gray-300 whitespace-pre-wrap">{notification.message}</span>
+          <div className="fixed top-6 right-6 z-50 animate-slide-up shadow-2xl">
+            <div className={`p-4 rounded-2xl border flex items-start justify-between gap-4 text-sm max-w-sm ${
+              notification.type === 'success' 
+                ? 'bg-emerald-950/90 border-emerald-800 text-emerald-300 backdrop-blur-md' 
+                : notification.type === 'warning' 
+                ? 'bg-amber-950/90 border-amber-800 text-amber-300 backdrop-blur-md' 
+                : 'bg-red-950/90 border-red-800 text-red-300 backdrop-blur-md'
+            }`}>
+              <div className="flex items-start gap-3">
+                {notification.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />}
+                {notification.type === 'warning' && <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />}
+                {notification.type === 'error' && <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />}
+                <div className="flex flex-col">
+                  <span className="font-semibold text-white text-base">
+                    {notification.type === 'success' ? 'Success' : notification.type === 'warning' ? 'Attention' : 'Error'}
+                  </span>
+                  <span className="text-sm mt-1 text-gray-300 whitespace-pre-wrap">{notification.message}</span>
+                </div>
               </div>
+              <button 
+                type="button" 
+                onClick={() => setNotification(null)}
+                className="text-gray-400 hover:text-white transition-colors shrink-0 p-1 rounded-lg hover:bg-white/10 focus:outline-none"
+              >
+                ✕
+              </button>
             </div>
-            <button 
-              type="button" 
-              onClick={() => setNotification(null)}
-              className="text-gray-400 hover:text-white transition-colors shrink-0 text-sm focus:outline-none"
-            >
-              ✕
-            </button>
           </div>
         )}
 
