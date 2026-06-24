@@ -132,11 +132,13 @@ export default function DocumentsPage({ session }) {
           const data = await res.json();
           const isDuplicate = res.status === 409;
           setError(data.detail || "Upload failed");
+          console.log("[TOAST] Setting error/warning notification", { isDuplicate, detail: data.detail });
           setNotification({
             type: isDuplicate ? "warning" : "error",
             message: isDuplicate ? "This file has already been uploaded." : (data.detail || "Upload failed"),
           });
         } else {
+          console.log("[TOAST] Setting success notification for", file.name);
           setNotification({
             type: "success",
             message: `"${file.name}" uploaded successfully!`,
@@ -144,6 +146,7 @@ export default function DocumentsPage({ session }) {
         }
       } catch (err) {
         setError("Upload failed — is the backend running?");
+        console.log("[TOAST] Setting connection error notification");
         setNotification({
           type: "error",
           message: "Upload failed — is the backend running?",
@@ -188,8 +191,63 @@ export default function DocumentsPage({ session }) {
 
   const readyCount = documents.filter((d) => d.status === "ready").length;
 
+  // Inline styles for the toast — immune to Tailwind purging
+  const toastColors = {
+    success: { bg: '#022c22', border: '#065f46', icon: '#34d399', text: '#6ee7b7' },
+    warning: { bg: '#422006', border: '#92400e', icon: '#fbbf24', text: '#fcd34d' },
+    error:   { bg: '#450a0a', border: '#991b1b', icon: '#f87171', text: '#fca5a5' },
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Floating Toast Notification */}
+      {notification && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 24,
+            right: 24,
+            zIndex: 99999,
+            maxWidth: 400,
+            minWidth: 300,
+            backgroundColor: toastColors[notification.type]?.bg || '#1f2937',
+            border: `1px solid ${toastColors[notification.type]?.border || '#374151'}`,
+            borderRadius: 16,
+            padding: '16px 20px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            animation: 'slideUp 0.3s ease-out forwards',
+          }}
+        >
+          <div style={{ fontSize: 22, lineHeight: 1, marginTop: 2, color: toastColors[notification.type]?.icon }}>
+            {notification.type === 'success' ? '✓' : '⚠'}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#fff', marginBottom: 4 }}>
+              {notification.type === 'success' ? 'Success' : notification.type === 'warning' ? 'Warning' : 'Error'}
+            </div>
+            <div style={{ fontSize: 13, color: toastColors[notification.type]?.text || '#d1d5db', lineHeight: 1.4 }}>
+              {notification.message}
+            </div>
+          </div>
+          <button
+            onClick={() => setNotification(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#9ca3af',
+              cursor: 'pointer',
+              fontSize: 18,
+              lineHeight: 1,
+              padding: 4,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* Settings panel */}
       <SettingsPanel
         settings={settings}
@@ -247,37 +305,7 @@ export default function DocumentsPage({ session }) {
           </div>
         )}
 
-        {/* Upload Status Notification Popup (Toast) */}
-        {notification && (
-          <div className="fixed top-6 right-6 z-50 animate-slide-up shadow-2xl">
-            <div className={`p-4 rounded-2xl border flex items-start justify-between gap-4 text-sm max-w-sm ${
-              notification.type === 'success' 
-                ? 'bg-emerald-950/90 border-emerald-800 text-emerald-300 backdrop-blur-md' 
-                : notification.type === 'warning' 
-                ? 'bg-amber-950/90 border-amber-800 text-amber-300 backdrop-blur-md' 
-                : 'bg-red-950/90 border-red-800 text-red-300 backdrop-blur-md'
-            }`}>
-              <div className="flex items-start gap-3">
-                {notification.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />}
-                {notification.type === 'warning' && <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />}
-                {notification.type === 'error' && <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />}
-                <div className="flex flex-col">
-                  <span className="font-semibold text-white text-base">
-                    {notification.type === 'success' ? 'Success' : notification.type === 'warning' ? 'Attention' : 'Error'}
-                  </span>
-                  <span className="text-sm mt-1 text-gray-300 whitespace-pre-wrap">{notification.message}</span>
-                </div>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setNotification(null)}
-                className="text-gray-400 hover:text-white transition-colors shrink-0 p-1 rounded-lg hover:bg-white/10 focus:outline-none"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
+
 
         {/* Upload zone */}
         <div
