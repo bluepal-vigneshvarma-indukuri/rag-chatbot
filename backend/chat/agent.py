@@ -399,8 +399,40 @@ def _parse_answer(text: str, retrieved_chunks: List[dict]) -> dict:
     json_match = re.search(r"CITATIONS:\s*```json\s*(\[.*?\])\s*```", text, re.DOTALL)
     if json_match:
         try:
-            citations = json.loads(json_match.group(1))
+            raw_citations = json.loads(json_match.group(1))
             answer = text[: json_match.start()].strip()
+            
+            unique_citations = []
+            seen_chunks = {}
+            index_remap = {}
+            current_idx = 1
+            
+            for c in raw_citations:
+                cid = c.get("chunk_id")
+                old_idx = c.get("citation_index")
+                
+                if cid in seen_chunks:
+                    index_remap[old_idx] = seen_chunks[cid]
+                else:
+                    seen_chunks[cid] = current_idx
+                    index_remap[old_idx] = current_idx
+                    c_copy = dict(c)
+                    c_copy["citation_index"] = current_idx
+                    unique_citations.append(c_copy)
+                    current_idx += 1
+                    
+            citations = unique_citations
+            
+            def replace_citation(match):
+                try:
+                    idx = int(match.group(1))
+                    if idx in index_remap:
+                        return f"[{index_remap[idx]}]"
+                except ValueError:
+                    pass
+                return match.group(0)
+
+            answer = re.sub(r'\[\s*(\d+)\s*\]', replace_citation, answer)
         except json.JSONDecodeError:
             pass
 
