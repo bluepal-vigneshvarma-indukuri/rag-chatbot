@@ -30,8 +30,9 @@ export default function DocumentsPage({ session }) {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
-  const [notification, setNotification] = useState(null); // { message: string, type: 'success' | 'warning' | 'error' }
-  const [notifiedDocs, setNotifiedDocs] = useState([]);
+  const [notification, setNotification] = useState(null);
+  const [notifiedDocs, setNotifiedDocs] = useState(new Set());
+  const initialLoadDone = useRef(false);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
@@ -61,27 +62,45 @@ export default function DocumentsPage({ session }) {
         const docs = await res.json();
         setDocuments(docs);
 
-        // Check for newly failed embeddings to notify
         setNotifiedDocs((prev) => {
-          const newNotified = [...prev];
-          let showed = false;
+          const newNotified = new Set(prev);
+          let latestNotification = null;
+
           docs.forEach((doc) => {
-            if (
-              doc.status === "ready" &&
-              doc.error_message &&
-              doc.error_message.includes("Embedding") &&
-              !prev.includes(doc.id)
-            ) {
-              newNotified.push(doc.id);
-              if (!showed) {
-                setNotification({
-                  type: "warning",
-                  message: `Embeddings failed for "${doc.filename}". The document is stored for keyword search only.`,
-                });
-                showed = true;
+            // We only care about docs that have finished processing
+            if (doc.status === "ready" || doc.status === "failed") {
+              if (!initialLoadDone.current) {
+                // On first load, just mark everything as notified so we don't spam the user
+                newNotified.add(doc.id);
+              } else if (!newNotified.has(doc.id)) {
+                // This document just finished processing in the background!
+                newNotified.add(doc.id);
+                
+                if (doc.status === "failed") {
+                  latestNotification = {
+                    type: "error",
+                    message: `Failed to process "${doc.filename}": ${doc.error_message}`,
+                  };
+                } else if (doc.error_message && doc.error_message.includes("Embedding")) {
+                  latestNotification = {
+                    type: "warning",
+                    message: `Embeddings failed for "${doc.filename}". Stored for keyword search only.`,
+                  };
+                } else {
+                  latestNotification = {
+                    type: "success",
+                    message: `Successfully processed "${doc.filename}"!`,
+                  };
+                }
               }
             }
           });
+
+          if (latestNotification) {
+            setNotification(latestNotification);
+          }
+          
+          initialLoadDone.current = true;
           return newNotified;
         });
       }
