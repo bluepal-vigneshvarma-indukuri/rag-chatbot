@@ -232,17 +232,72 @@ def _run_openai_compat_agent(
             f"Model '{model}' was not found at '{host}'. Please check the model name in Settings.",
         )
     except BadRequestError as exc:
-        if "model" in str(exc).lower():
+        exc_str = str(exc)
+        # Model generated malformed tool call syntax — retry without tools using direct search
+        if "tool_use_failed" in exc_str or "failed_generation" in exc_str:
+            try:
+                import psycopg2
+                db_dimension = 1536
+                try:
+                    conn = psycopg2.connect(db_url)
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                SELECT atttypmod FROM pg_attribute
+                                WHERE attrelid = 'public.chunks'::regclass AND attname = 'embedding';
+                            """)
+                            row = cur.fetchone()
+                            if row and row[0] > 0:
+                                db_dimension = row[0]
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass
+                query_embedding = _embed_query(
+                    question, embed_base_url, embed_model, embed_api_key, embed_disabled, db_dimension
+                )
+                chunks = hybrid_search(
+                    query=question,
+                    user_id=user_id,
+                    document_ids=document_ids,
+                    query_embedding=query_embedding,
+                    db_url=db_url,
+                )
+                context = "\n\n".join(
+                    f"[Chunk {c['chunk_id']}]\n{c.get('text', c.get('excerpt', ''))}" for c in chunks
+                ) if chunks else "No relevant documents found."
+                fallback_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        f"Context from documents:\n\n{context}\n\n"
+                        f"Question: {question}"
+                    )},
+                ]
+                fallback = client.chat.completions.create(
+                    model=model, messages=fallback_messages,
+                    max_tokens=4096, temperature=0.1,
+                )
+                return _parse_answer(
+                    fallback.choices[0].message.content or "",
+                    chunks,
+                )
+            except Exception:
+                raise AgentError(
+                    "tool_use_failed",
+                    "The model had trouble processing your query. Please try again.",
+                )
+        if "model" in exc_str.lower():
             raise AgentError(
                 "model_not_found",
                 f"Model '{model}' is not available at '{host}'. Please check the model name in Settings.",
             )
-        raise AgentError("bad_request", str(exc))
+        raise AgentError("bad_request", exc_str)
     except RateLimitError:
         raise AgentError(
             "rate_limit",
             f"Rate limit reached for '{host}'. Please wait a moment and try again.",
         )
+
 
 
 # ── Tool executor ─────────────────────────────────────────────────────────────
