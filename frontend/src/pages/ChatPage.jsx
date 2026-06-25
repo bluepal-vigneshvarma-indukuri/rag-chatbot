@@ -61,7 +61,17 @@ export default function ChatPage({ session }) {
   const [showPinMenu, setShowPinMenu]         = useState(false);
   const [uploading, setUploading]             = useState(false);
   const [activeCitation, setActiveCitation]   = useState(null);
+  const [notification, setNotification]       = useState(null);
+  const notifiedDocs                          = useRef(new Set());
   const [settings, updateSettings]            = useProviderSettings();
+
+  // Auto-dismiss notification after 5 seconds
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   const bottomRef    = useRef(null);
   const fileInputRef = useRef(null);
@@ -163,16 +173,39 @@ export default function ChatPage({ session }) {
       form.append("embed_api_key", settings.embedApiKey);
       form.append("embed_disabled", settings.embedDisabled ? "true" : "false");
       try {
-        const res = await fetch(`${BACKEND}/documents/upload`, {
+        const res = await fetch(`${BACKEND}/documents/upload-sync`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: form,
         });
         if (res.ok) {
           const data = await res.json();
-          setPinnedDocIds((prev) => [...new Set([...prev, data.document_id])]);
+          // Pin the uploaded doc to this chat
+          if (data.id) {
+            setPinnedDocIds((prev) => [...new Set([...prev, data.id])]);
+            notifiedDocs.current.add(data.id);
+          } else if (data.document_id) {
+            setPinnedDocIds((prev) => [...new Set([...prev, data.document_id])]);
+          }
+          // Show immediate notification based on final status
+          if (data.status === "failed") {
+            setNotification({ type: "error", message: `Failed to process "${file.name}": ${data.error_message || "Unknown error"}` });
+          } else if (data.error_message && data.error_message.includes("Embedding")) {
+            setNotification({ type: "warning", message: `Embeddings failed for "${file.name}". Stored for keyword search only.` });
+          } else {
+            setNotification({ type: "success", message: `Successfully processed "${file.name}"!` });
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          const isDuplicate = res.status === 409;
+          setNotification({
+            type: isDuplicate ? "warning" : "error",
+            message: isDuplicate ? "This file has already been uploaded." : (errData.detail || "Upload failed"),
+          });
         }
-      } catch { /* ignore */ }
+      } catch {
+        setNotification({ type: "error", message: "Upload failed — is the backend running?" });
+      }
     }
 
     setUploading(false);
@@ -346,8 +379,43 @@ export default function ChatPage({ session }) {
   const readyDocs = documents.filter((d) => d.status === "ready");
   const activeQuestion = [...messages].reverse().find((m) => m.role === "user")?.content;
 
+  const toastColors = {
+    success: { bg: '#022c22', border: '#065f46', icon: '#34d399', text: '#6ee7b7' },
+    warning: { bg: '#422006', border: '#92400e', icon: '#fbbf24', text: '#fcd34d' },
+    error:   { bg: '#450a0a', border: '#991b1b', icon: '#f87171', text: '#fca5a5' },
+  };
+
   return (
     <div className="h-screen flex bg-white overflow-hidden">
+      {/* Floating Toast Notification */}
+      {notification && (
+        <div style={{
+          position: 'fixed', top: 24, right: 24, zIndex: 99999,
+          maxWidth: 400, minWidth: 300,
+          backgroundColor: toastColors[notification.type]?.bg || '#1f2937',
+          border: `1px solid ${toastColors[notification.type]?.border || '#374151'}`,
+          borderRadius: 16, padding: '16px 20px',
+          display: 'flex', alignItems: 'flex-start', gap: 12,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ fontSize: 22, lineHeight: 1, marginTop: 2, color: toastColors[notification.type]?.icon }}>
+            {notification.type === 'success' ? '✓' : '⚠'}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#fff', marginBottom: 4 }}>
+              {notification.type === 'success' ? 'Success' : notification.type === 'warning' ? 'Warning' : 'Error'}
+            </div>
+            <div style={{ fontSize: 13, color: toastColors[notification.type]?.text || '#d1d5db', lineHeight: 1.4 }}>
+              {notification.message}
+            </div>
+          </div>
+          <button onClick={() => setNotification(null)}
+            style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 4 }}>
+            ✕
+          </button>
+        </div>
+      )}
+
       <SettingsPanel
         settings={settings}
         onUpdate={updateSettings}
