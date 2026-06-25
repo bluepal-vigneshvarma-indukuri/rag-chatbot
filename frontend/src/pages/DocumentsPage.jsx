@@ -31,7 +31,7 @@ export default function DocumentsPage({ session }) {
   const [selected, setSelected] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
   const [notification, setNotification] = useState(null);
-  const [notifiedDocs, setNotifiedDocs] = useState(new Set());
+  const notifiedDocs = useRef(new Set());
   const initialLoadDone = useRef(false);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
@@ -62,19 +62,17 @@ export default function DocumentsPage({ session }) {
         const docs = await res.json();
         setDocuments(docs);
 
-        setNotifiedDocs((prev) => {
-          const newNotified = new Set(prev);
-          let latestNotification = null;
+        let latestNotification = null;
 
           docs.forEach((doc) => {
             // We only care about docs that have finished processing
             if (doc.status === "ready" || doc.status === "failed") {
               if (!initialLoadDone.current) {
                 // On first load, just mark everything as notified so we don't spam the user
-                newNotified.add(doc.id);
-              } else if (!newNotified.has(doc.id)) {
+                notifiedDocs.current.add(doc.id);
+              } else if (!notifiedDocs.current.has(doc.id)) {
                 // This document just finished processing in the background!
-                newNotified.add(doc.id);
+                notifiedDocs.current.add(doc.id);
                 
                 if (doc.status === "failed") {
                   latestNotification = {
@@ -101,8 +99,6 @@ export default function DocumentsPage({ session }) {
           }
           
           initialLoadDone.current = true;
-          return newNotified;
-        });
       }
     } catch {}
   }
@@ -142,15 +138,15 @@ export default function DocumentsPage({ session }) {
           const data = await res.json();
           console.log("[TOAST] Synchronous upload complete", data);
 
-          // Add this document ID to notifiedDocs to prevent background polling double-toast
+          // Pre-register this doc ID synchronously so polling doesn't double-toast
           if (data.id) {
-            setNotifiedDocs((prev) => {
-              const next = new Set(prev);
-              next.add(data.id);
-              return next;
-            });
+            notifiedDocs.current.add(data.id);
           }
 
+          // Refresh the document list first
+          await loadDocuments();
+
+          // Then show the notification based on the final status from the sync response
           if (data.status === "failed") {
             setNotification({
               type: "error",
@@ -167,6 +163,7 @@ export default function DocumentsPage({ session }) {
               message: `Successfully processed "${file.name}"!`,
             });
           }
+          continue;
         }
       } catch (err) {
         setError("Upload failed — is the backend running?");
